@@ -1,6 +1,4 @@
 from flask import Flask, render_template, request
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 import sqlite3
 
 app = Flask(__name__)
@@ -44,9 +42,10 @@ def search():
         cursor = conn.cursor()
 
         if retrieval_model == "1":
+            # Boolean Model
             search_question = search_question.lower()
             search_question = search_question.replace(
-                'and', 'AND').replace('or', 'OR').replace('not', 'NOT').replace(' و ', ' AND ').replace('أو ', 'OR ')
+                'and', 'AND').replace('or', 'OR').replace('not', 'NOT')
             terms = search_question.split()
             query_parts = []
 
@@ -64,45 +63,40 @@ def search():
             results = cursor.fetchall()
 
         elif retrieval_model == "2":
+            # Extended Boolean Model
             search_question = search_question.lower()
             terms = search_question.split()
-            query_parts = []
-            weights = {}
-            important_terms = ['what', 'why', 'Dubai']
-            for term in terms:
-                if term in important_terms:
-                    weights[term] = 2
-                else:
-                    weights[term] = 1
-            for term in terms:
-                if weights[term] == 2:
-                    query_parts.append(f"question LIKE '%{term}%'")
-                else:
-                    query_parts.append(f"question LIKE '%{term}%'")
+            query_parts = [f"question LIKE '%{term}%'" for term in terms]
             final_query = ' AND '.join(query_parts)
             cursor.execute(f"SELECT * FROM faqs WHERE {final_query}")
             results = cursor.fetchall()
 
         elif retrieval_model == "3":
+            # Simplified Vector Model
             search_question = search_question.lower()
             cursor.execute("SELECT question, answer, language FROM faqs")
             questions = cursor.fetchall()
-            documents = [q['question'] for q in questions]
-            documents.append(search_question)
-            vectorizer = TfidfVectorizer(stop_words='english')
-            tfidf_matrix = vectorizer.fit_transform(documents)
-            cosine_similarities = cosine_similarity(
-                tfidf_matrix[-1], tfidf_matrix[:-1])
-            ranked_questions = sorted(
-                zip(cosine_similarities[0], questions), reverse=True, key=lambda x: x[0]
-            )
-            top_results = ranked_questions[:5]
-            results = [{
-                "question": q[1]['question'],
-                "answer": q[1]['answer'],
-                "language": q[1]['language'],
-                "similarity": q[0]
-            } for q in top_results]
+
+            def calculate_similarity(question_text, search_query):
+                # Simple similarity based on common word overlap
+                q_words = set(question_text.lower().split())
+                s_words = set(search_query.lower().split())
+                return len(q_words & s_words) / max(len(q_words | s_words), 1)
+
+            scored_questions = [
+                {
+                    "question": q["question"],
+                    "answer": q["answer"],
+                    "language": q["language"],
+                    "similarity": calculate_similarity(q["question"], search_question)
+                }
+                for q in questions
+            ]
+            results = sorted(scored_questions,
+                             key=lambda x: x["similarity"], reverse=True)[:5]
+        else:
+            results = []
+
         conn.close()
         return render_template("search.html", results=results, query=search_question)
     return render_template("search.html", results=[])
